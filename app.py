@@ -72,7 +72,7 @@ st.markdown(
     "**Only files with zero detected sensitive data are uploaded to cloud storage.**"
 )
 st.info(
-    "🛡️ **Zero-Tolerance Policy:** Any file containing sensitive information "
+    "**Zero-Tolerance Policy:** Any file containing sensitive information "
     "is blocked from cloud upload to prevent data leakage.",
     icon="🛡️"
 )
