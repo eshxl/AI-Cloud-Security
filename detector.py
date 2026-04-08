@@ -1,5 +1,11 @@
 """
-detector.py  — v4 Final (zero-tolerance, 27 pattern types, context-aware)
+detector.py  — (27 pattern types, context-aware, sensible risk thresholds)
+
+Risk thresholds (score-based):
+  SAFE        = 0
+  LOW RISK    = 1–5   → email + phone alone = 4 → uploads with warning ✅
+  MEDIUM RISK = 6–14  → Aadhaar/PAN/bank alone (8) or email+phone+more
+  HIGH RISK   = 15+   → credentials, multiple critical fields
 """
 import re
 
@@ -31,6 +37,7 @@ EMPLOYEE_ID_PATTERN = r'(?i)\bEMP[\s\-_]?\d{3,8}\b'
 OTP_PATTERN      = r'(?i)\b(?:otp|one[\s\-]time[\s\-](?:password|pin|code))\s*[:=]?\s*\d{4,8}\b'
 INSURANCE_PATTERN = r'(?i)(?:policy\s*(?:no\.?|number|#)?|insurance\s*(?:id|no\.?))\s*[:=\-]?\s*[A-Z0-9\-]{6,20}'
 
+# ── Weights (unchanged — these are correct) ───────────────────────────────────
 WEIGHTS = {
     "passwords":10,"api_key":10,"jwt_token":10,"aws_key":10,
     "ssh_key":10,"private_key":10,"bearer_token":10,
@@ -40,39 +47,57 @@ WEIGHTS = {
     "dob":2,"ip_address":2,"emails":1,
 }
 
+# ── Score → Risk mapping ──────────────────────────────────────────────────────
+#
+#  What each band means in practice:
+#
+#  SAFE  (0)       — nothing found
+#  LOW   (1–5)     — email only (1), phone only (3), email+phone (4)
+#                    → common in resumes/business docs → UPLOAD with warning
+#  MEDIUM (6–14)   — Aadhaar (8), PAN (8), bank account (8), salary (8),
+#                    or combinations of lower-weight fields
+#                    → genuinely sensitive → BLOCK
+#  HIGH  (15+)     — any credential/key (10+), or multiple critical ID fields
+#                    → critical → BLOCK
+#
+#  Old thresholds:  LOW ≤3 / MEDIUM ≤7  ← email+phone=4 wrongly hit MEDIUM
+#  New thresholds:  LOW ≤5 / MEDIUM ≤14 ← email+phone=4 correctly stays LOW
+
 def detect_sensitive_data(text):
     return {
-        "emails":re.findall(EMAIL_PATTERN,text),
-        "phones":re.findall(PHONE_PATTERN,text),
-        "aadhaar":re.findall(AADHAAR_PATTERN,text),
-        "pan":re.findall(PAN_PATTERN,text),
-        "passport":re.findall(PASSPORT_PATTERN,text),
-        "voter_id":re.findall(VOTER_ID_PATTERN,text),
-        "driving_licence":re.findall(DL_PATTERN,text),
-        "dob":re.findall(DOB_PATTERN,text),
-        "bank_account":re.findall(BANK_ACC_PATTERN,text),
-        "ifsc":re.findall(IFSC_PATTERN,text),
-        "credit_card":re.findall(CREDIT_CARD_PATTERN,text),
-        "cvv":re.findall(CVV_PATTERN,text),
-        "upi":re.findall(UPI_PATTERN,text),
-        "swift_bic":re.findall(SWIFT_PATTERN,text),
-        "gst_number":re.findall(GST_PATTERN,text),
-        "salary_figure":re.findall(SALARY_PATTERN,text),
-        "passwords":re.findall(PASSWORD_PATTERN,text),
-        "api_key":re.findall(API_KEY_PATTERN,text),
-        "jwt_token":re.findall(JWT_PATTERN,text),
-        "aws_key":re.findall(AWS_KEY_PATTERN,text),
-        "ssh_key":re.findall(SSH_KEY_PATTERN,text),
-        "private_key":re.findall(PRIVATE_KEY_PATTERN,text),
-        "bearer_token":re.findall(BEARER_PATTERN,text),
-        "ip_address":re.findall(IP_PATTERN,text),
-        "employee_id":re.findall(EMPLOYEE_ID_PATTERN,text),
-        "otp":re.findall(OTP_PATTERN,text),
-        "insurance":re.findall(INSURANCE_PATTERN,text),
+        "emails":          re.findall(EMAIL_PATTERN,        text),
+        "phones":          re.findall(PHONE_PATTERN,        text),
+        "aadhaar":         re.findall(AADHAAR_PATTERN,      text),
+        "pan":             re.findall(PAN_PATTERN,           text),
+        "passport":        re.findall(PASSPORT_PATTERN,     text),
+        "voter_id":        re.findall(VOTER_ID_PATTERN,     text),
+        "driving_licence": re.findall(DL_PATTERN,           text),
+        "dob":             re.findall(DOB_PATTERN,          text),
+        "bank_account":    re.findall(BANK_ACC_PATTERN,     text),
+        "ifsc":            re.findall(IFSC_PATTERN,         text),
+        "credit_card":     re.findall(CREDIT_CARD_PATTERN,  text),
+        "cvv":             re.findall(CVV_PATTERN,          text),
+        "upi":             re.findall(UPI_PATTERN,          text),
+        "swift_bic":       re.findall(SWIFT_PATTERN,        text),
+        "gst_number":      re.findall(GST_PATTERN,          text),
+        "salary_figure":   re.findall(SALARY_PATTERN,       text),
+        "passwords":       re.findall(PASSWORD_PATTERN,     text),
+        "api_key":         re.findall(API_KEY_PATTERN,      text),
+        "jwt_token":       re.findall(JWT_PATTERN,          text),
+        "aws_key":         re.findall(AWS_KEY_PATTERN,      text),
+        "ssh_key":         re.findall(SSH_KEY_PATTERN,      text),
+        "private_key":     re.findall(PRIVATE_KEY_PATTERN,  text),
+        "bearer_token":    re.findall(BEARER_PATTERN,       text),
+        "ip_address":      re.findall(IP_PATTERN,           text),
+        "employee_id":     re.findall(EMPLOYEE_ID_PATTERN,  text),
+        "otp":             re.findall(OTP_PATTERN,          text),
+        "insurance":       re.findall(INSURANCE_PATTERN,    text),
     }
 
+
 def calculate_risk(detected, text):
-    regex_score = sum(len(detected.get(f,[])) * w for f, w in WEIGHTS.items())
+    regex_score = sum(len(detected.get(f, [])) * w for f, w in WEIGHTS.items())
+
     ml_boost = 0
     if regex_score == 0:
         try:
@@ -81,25 +106,47 @@ def calculate_risk(detected, text):
                 ml_boost = 5
         except Exception:
             pass
+
     total = regex_score + ml_boost
-    if total == 0:   return "SAFE"
-    elif total <= 3: return "LOW RISK"
-    elif total <= 7: return "MEDIUM RISK"
-    else:            return "HIGH RISK"
+
+    if   total == 0:  return "SAFE"
+    elif total <= 5:  return "LOW RISK"    # email+phone=4 → LOW ✅
+    elif total <= 14: return "MEDIUM RISK" # Aadhaar/PAN/bank (8) → MEDIUM ✅
+    else:             return "HIGH RISK"   # any credential (10+) → HIGH ✅
+
 
 def get_risk_reasons(detected):
     labels = {
-        "emails":"Email address","phones":"Phone number","aadhaar":"Aadhaar number",
-        "pan":"PAN card","passport":"Passport number","voter_id":"Voter ID",
-        "driving_licence":"Driving licence","dob":"Date of birth",
-        "bank_account":"Bank account number","ifsc":"IFSC code",
-        "credit_card":"Credit card number","cvv":"CVV/security code",
-        "upi":"UPI ID","swift_bic":"SWIFT/BIC code","gst_number":"GST number",
-        "salary_figure":"Salary/compensation figure","passwords":"Password/credential",
-        "api_key":"API key/secret token","jwt_token":"JWT token",
-        "aws_key":"AWS access key","ssh_key":"SSH private key",
-        "private_key":"Private key (PEM)","bearer_token":"Bearer token",
-        "ip_address":"IP address","employee_id":"Employee ID",
-        "otp":"OTP/one-time code","insurance":"Insurance policy number",
+        "emails":          "Email address",
+        "phones":          "Phone number",
+        "aadhaar":         "Aadhaar number",
+        "pan":             "PAN card",
+        "passport":        "Passport number",
+        "voter_id":        "Voter ID",
+        "driving_licence": "Driving licence",
+        "dob":             "Date of birth",
+        "bank_account":    "Bank account number",
+        "ifsc":            "IFSC code",
+        "credit_card":     "Credit card number",
+        "cvv":             "CVV/security code",
+        "upi":             "UPI ID",
+        "swift_bic":       "SWIFT/BIC code",
+        "gst_number":      "GST number",
+        "salary_figure":   "Salary/compensation figure",
+        "passwords":       "Password/credential",
+        "api_key":         "API key/secret token",
+        "jwt_token":       "JWT token",
+        "aws_key":         "AWS access key",
+        "ssh_key":         "SSH private key",
+        "private_key":     "Private key (PEM)",
+        "bearer_token":    "Bearer token",
+        "ip_address":      "IP address",
+        "employee_id":     "Employee ID",
+        "otp":             "OTP/one-time code",
+        "insurance":       "Insurance policy number",
     }
-    return [f"{labels[k]} ({len(v)} found)" for k,v in detected.items() if v and k in labels]
+    return [
+        f"{labels[k]} ({len(v)} found)"
+        for k, v in detected.items()
+        if v and k in labels
+    ]
