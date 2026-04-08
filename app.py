@@ -1,21 +1,30 @@
 """
-app.py  — v4 (Zero-tolerance data leakage prevention)
-=======================================================
-Policy: ONLY files classified as SAFE are uploaded to Google Drive.
-LOW RISK, MEDIUM RISK, and HIGH RISK are ALL blocked.
-No fallback to local storage — if it contains any sensitive data, it does not go to cloud.
+app.py  — Cloud deployment version (Streamlit Community Cloud)
+==============================================================
+Changes from local version:
+  - Uses /tmp/uploads/ for file storage (cloud servers use ephemeral /tmp)
+  - Auto-trains model.pkl on startup if not found (for fresh cloud deployments)
+  - Google Drive upload via Service Account (no browser OAuth needed)
 """
 
 import os, json
 import pandas as pd
 import streamlit as st
 
+# ── Auto-train model if not present (handles fresh cloud deployment) ───────────
+if not os.path.exists("model.pkl"):
+    with st.spinner("First run: training ML model... (takes ~30 seconds)"):
+        import subprocess
+        subprocess.run(["python", "build_dataset.py"], check=True)
+        subprocess.run(["python", "ml_model.py"],     check=True)
+
 from utils import extract_text
 from ml_model import get_keywords
 from drive_uploader import upload_to_drive
 from detector import detect_sensitive_data, calculate_risk, get_risk_reasons
 
-UPLOAD_FOLDER = "uploads"
+# ── Use /tmp for uploads on cloud servers ─────────────────────────────────────
+UPLOAD_FOLDER = "/tmp/uploads" if os.path.exists("/tmp") else "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 st.set_page_config(page_title="AI Cloud Security Scanner", page_icon="🔐", layout="wide")
@@ -28,50 +37,31 @@ with st.sidebar:
     if os.path.exists("metrics.json"):
         with open("metrics.json") as f:
             metrics = json.load(f)
-
         best_name = metrics["best_model"]
         res = metrics["all_results"][best_name]
-
         st.markdown(f"**Best Model:** `{best_name}`")
-        st.markdown(
-            f"**Evaluation:** {res['cv_folds']}-Fold CV "
-            f"on {res['unique_samples']} unique samples"
-        )
+        st.markdown(f"**Evaluation:** {res['cv_folds']}-Fold CV on {res['unique_samples']} unique samples")
         st.markdown("---")
-
         c1, c2 = st.columns(2)
         c1.metric("Accuracy",  f"{res['accuracy']  * 100:.1f}%")
         c2.metric("F1 Score",  f"{res['f1_score']  * 100:.1f}%")
         c1.metric("Precision", f"{res['precision'] * 100:.1f}%")
         c2.metric("Recall",    f"{res['recall']    * 100:.1f}%")
-
         st.markdown("**Confusion Matrix:**")
         cm = res["confusion_matrix"]
-        st.dataframe(
-            pd.DataFrame(cm,
-                index=["Actual: Safe", "Actual: Sensitive"],
-                columns=["Pred: Safe", "Pred: Sensitive"]),
-            use_container_width=True
-        )
-
+        st.dataframe(pd.DataFrame(cm,
+            index=["Actual: Safe","Actual: Sensitive"],
+            columns=["Pred: Safe","Pred: Sensitive"]), use_container_width=True)
         st.markdown("---")
         st.markdown("**All Models Compared:**")
-        rows = [
-            {"Model": n,
-             "Accuracy":  f"{r['accuracy']  * 100:.1f}%",
-             "Precision": f"{r['precision'] * 100:.1f}%",
-             "Recall":    f"{r['recall']    * 100:.1f}%",
-             "F1":        f"{r['f1_score']  * 100:.1f}%"}
-            for n, r in metrics["all_results"].items()
-        ]
+        rows = [{"Model":n,
+                 "Accuracy":f"{r['accuracy']*100:.1f}%",
+                 "Precision":f"{r['precision']*100:.1f}%",
+                 "Recall":f"{r['recall']*100:.1f}%",
+                 "F1":f"{r['f1_score']*100:.1f}%"}
+                for n,r in metrics["all_results"].items()]
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-        st.info(
-            "Regex detects 27 structured PII/credential types. "
-            "Gradient Boosting ML provides contextual detection "
-            "when no structured patterns are found.",
-            icon="ℹ️"
-        )
+        st.info("Regex detects 27 structured PII/credential types. Gradient Boosting ML provides contextual detection.", icon="ℹ️")
     else:
         st.warning("No metrics found. Run `python ml_model.py` first.")
 
@@ -81,10 +71,13 @@ st.markdown(
     "Upload a document to scan for sensitive or confidential content. "
     "**Only files with zero detected sensitive data are uploaded to cloud storage.**"
 )
-
-uploaded_file = st.file_uploader(
-    "Upload TXT, PDF, or DOCX", type=["txt", "pdf", "docx"]
+st.info(
+    "🛡️ **Zero-Tolerance Policy:** Any file containing sensitive information "
+    "is blocked from cloud upload to prevent data leakage.",
+    icon="🛡️"
 )
+
+uploaded_file = st.file_uploader("Upload TXT, PDF, or DOCX", type=["txt","pdf","docx"])
 
 if uploaded_file is not None:
     file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
@@ -97,25 +90,14 @@ if uploaded_file is not None:
 
         if text == "Unsupported file format":
             st.error("Unsupported file type. Please upload TXT, PDF, or DOCX.")
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            if os.path.exists(file_path): os.remove(file_path)
         else:
             detected = detect_sensitive_data(text)
             risk     = calculate_risk(detected, text)
             reasons  = get_risk_reasons(detected)
 
-            # ── Detection Results ──────────────────────────────────────────
+            # ── Detection Results (tabbed) ─────────────────────────────────
             st.subheader("🔎 Detection Results")
-
-            # Group detections into categories for clean display
-            identity_fields = ["emails","phones","aadhaar","pan","passport",
-                                "voter_id","driving_licence","dob"]
-            financial_fields = ["bank_account","ifsc","credit_card","cvv",
-                                 "upi","swift_bic","gst_number","salary_figure"]
-            credential_fields = ["passwords","api_key","jwt_token","aws_key",
-                                  "ssh_key","private_key","bearer_token"]
-            other_fields = ["ip_address","employee_id","otp","insurance"]
-
             label_map = {
                 "emails":"Email","phones":"Phone","aadhaar":"Aadhaar",
                 "pan":"PAN Card","passport":"Passport","voter_id":"Voter ID",
@@ -129,92 +111,55 @@ if uploaded_file is not None:
                 "employee_id":"Employee ID","otp":"OTP","insurance":"Insurance Policy",
             }
 
-            def show_group(title, emoji, fields):
-                st.markdown(f"**{emoji} {title}**")
+            def show_group(fields):
                 cols = st.columns(2)
                 for i, f in enumerate(fields):
                     val = detected.get(f, [])
-                    display = val if val else "None"
-                    cols[i % 2].write(f"`{label_map[f]}:` {display}")
+                    cols[i%2].write(f"`{label_map[f]}:` {val if val else 'None'}")
 
-            tab1, tab2, tab3, tab4 = st.tabs(
-                ["🪪 Identity", "💰 Financial", "🔑 Credentials", "📋 Other"]
-            )
-            with tab1:
-                show_group("Identity & Personal", "🪪", identity_fields)
-            with tab2:
-                show_group("Financial", "💰", financial_fields)
-            with tab3:
-                show_group("Credentials & Secrets", "🔑", credential_fields)
-            with tab4:
-                show_group("Other PII", "📋", other_fields)
+            tab1,tab2,tab3,tab4 = st.tabs(["🪪 Identity","💰 Financial","🔑 Credentials","📋 Other"])
+            with tab1: show_group(["emails","phones","aadhaar","pan","passport","voter_id","driving_licence","dob"])
+            with tab2: show_group(["bank_account","ifsc","credit_card","cvv","upi","swift_bic","gst_number","salary_figure"])
+            with tab3: show_group(["passwords","api_key","jwt_token","aws_key","ssh_key","private_key","bearer_token"])
+            with tab4: show_group(["ip_address","employee_id","otp","insurance"])
 
             # ── Risk Assessment ────────────────────────────────────────────
             st.subheader("⚖️ Risk Assessment")
-
-            risk_colors = {
-                "SAFE":        ("✅", "success", "SAFE — No sensitive data detected"),
-                "LOW RISK":    ("⚠️", "warning", "LOW RISK — Sensitive data found"),
-                "MEDIUM RISK": ("🟠", "warning", "MEDIUM RISK — Sensitive data found"),
-                "HIGH RISK":   ("🚫", "error",   "HIGH RISK — Critical sensitive data found"),
-            }
-            icon, style, label = risk_colors[risk]
-
-            if style == "success":
-                st.success(f"{icon} {label}")
-            elif style == "warning":
-                st.warning(f"{icon} {label}")
+            if risk == "SAFE":
+                st.success("✅ SAFE — No sensitive data detected")
+            elif risk == "LOW RISK":
+                st.warning("⚠️ LOW RISK — Sensitive data found")
+            elif risk == "MEDIUM RISK":
+                st.warning("🟠 MEDIUM RISK — Sensitive data found")
             else:
-                st.error(f"{icon} {label}")
+                st.error("🚫 HIGH RISK — Critical sensitive data found")
 
-            # Show what was found
             if reasons:
-                st.markdown("**Detected sensitive content:**")
+                st.markdown("**Detected:**")
                 for r in reasons:
                     st.markdown(f"  - {r}")
 
-            # ── Upload decision (ZERO TOLERANCE) ──────────────────────────
+            # ── Upload Decision ────────────────────────────────────────────
             st.subheader("☁️ Cloud Upload Decision")
-
             if risk == "SAFE":
-                # Only SAFE files go to cloud
                 with st.spinner("Uploading to Google Drive..."):
                     try:
                         result = upload_to_drive(file_path)
-                        st.success(
-                            f"✅ File securely uploaded to Google Drive.\n\n"
-                            f"**File ID:** `{result.get('id', 'N/A')}`"
-                        )
+                        st.success(f"✅ Uploaded to Google Drive. File ID: `{result.get('id','N/A')}`")
                     except Exception as e:
                         st.error(f"Upload failed: {e}")
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-
+                if os.path.exists(file_path): os.remove(file_path)
             else:
-                # ALL non-SAFE files are blocked — no exceptions, no fallback
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-
-                block_messages = {
-                    "LOW RISK":    "This file contains sensitive information and has been blocked from cloud upload.",
-                    "MEDIUM RISK": "This file contains sensitive information and has been blocked from cloud upload.",
-                    "HIGH RISK":   "This file contains critical sensitive or confidential data and has been blocked.",
-                }
+                if os.path.exists(file_path): os.remove(file_path)
                 st.error(
                     f"🚫 **Upload Blocked**\n\n"
-                    f"{block_messages[risk]}\n\n"
-                    f"The file has been deleted from the server. "
-                    f"Remove or redact the sensitive content before attempting to upload."
+                    f"This file contains sensitive information and has been blocked from cloud upload. "
+                    f"The file has been deleted from the server."
                 )
-
                 if reasons:
-                    st.warning(
-                        "**To make this file safe to upload, remove:**\n" +
-                        "\n".join(f"  - {r}" for r in reasons)
-                    )
+                    st.warning("**Remove or redact:**\n" + "\n".join(f"  - {r}" for r in reasons))
 
-            # ── Sensitive Keywords ─────────────────────────────────────────
             keywords = get_keywords(text)
             if keywords:
-                st.subheader("🏷️ Sensitive Keywords Detected")
+                st.subheader("🏷️ Sensitive Keywords")
                 st.write(", ".join(f"`{k}`" for k in keywords))
