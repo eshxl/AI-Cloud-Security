@@ -1,10 +1,11 @@
 """
 app.py  — Cloud deployment version (Streamlit Community Cloud)
 ==============================================================
-Changes from local version:
-  - Uses /tmp/uploads/ for file storage (cloud servers use ephemeral /tmp)
-  - Auto-trains model.pkl on startup if not found (for fresh cloud deployments)
-  - Google Drive upload via Service Account (no browser OAuth needed)
+Upload policy:
+  SAFE      → Upload to Google Drive (Safe_Cloud_Uploads folder)
+  LOW RISK  → Upload with warning (e.g. resume with just an email)
+  MEDIUM    → Blocked. User must redact before uploading.
+  HIGH RISK → Blocked. Critical sensitive data.
 """
 
 import os, json
@@ -69,11 +70,11 @@ with st.sidebar:
 st.title("🔐 AI-Based Data Leakage Detection System")
 st.markdown(
     "Upload a document to scan for sensitive or confidential content. "
-    "**Only files with zero detected sensitive data are uploaded to cloud storage.**"
+    "Files are uploaded to **Safe_Cloud_Uploads** on Google Drive unless critical sensitive data is detected."
 )
 st.info(
-    "**Zero-Tolerance Policy:** Any file containing sensitive information "
-    "is blocked from cloud upload to prevent data leakage.",
+    "**Upload Policy:** SAFE and LOW RISK files are uploaded. "
+    "MEDIUM and HIGH RISK files are blocked until sensitive data is removed.",
     icon="🛡️"
 )
 
@@ -128,7 +129,7 @@ if uploaded_file is not None:
             if risk == "SAFE":
                 st.success("✅ SAFE — No sensitive data detected")
             elif risk == "LOW RISK":
-                st.warning("⚠️ LOW RISK — Sensitive data found")
+                st.warning("⚠️ LOW RISK — Minor sensitive data found (e.g. email/phone only)")
             elif risk == "MEDIUM RISK":
                 st.warning("🟠 MEDIUM RISK — Sensitive data found")
             else:
@@ -141,23 +142,55 @@ if uploaded_file is not None:
 
             # ── Upload Decision ────────────────────────────────────────────
             st.subheader("☁️ Cloud Upload Decision")
+
+            # SAFE → upload normally
             if risk == "SAFE":
-                with st.spinner("Uploading to Google Drive..."):
+                with st.spinner("Uploading to Google Drive (Safe_Cloud_Uploads)..."):
                     try:
                         result = upload_to_drive(file_path)
-                        st.success(f"✅ Uploaded to Google Drive. File ID: `{result.get('id','N/A')}`")
+                        link = result.get("webViewLink", "")
+                        fid  = result.get("id", "N/A")
+                        st.success(
+                            f"✅ **Uploaded successfully** to `Safe_Cloud_Uploads`.\n\n"
+                            f"File ID: `{fid}`" + (f"\n\n[Open in Drive]({link})" if link else "")
+                        )
                     except Exception as e:
                         st.error(f"Upload failed: {e}")
                 if os.path.exists(file_path): os.remove(file_path)
+
+            # LOW RISK → upload with warning banner
+            elif risk == "LOW RISK":
+                st.warning(
+                    "⚠️ **LOW RISK — Uploading with caution.**\n\n"
+                    "Only minor data (e.g. email address or phone number) was found. "
+                    "This is common in resumes and business documents."
+                )
+                with st.spinner("Uploading to Google Drive (Safe_Cloud_Uploads)..."):
+                    try:
+                        result = upload_to_drive(file_path)
+                        link = result.get("webViewLink", "")
+                        fid  = result.get("id", "N/A")
+                        st.success(
+                            f"✅ **Uploaded with warning** to `Safe_Cloud_Uploads`.\n\n"
+                            f"File ID: `{fid}`" + (f"\n\n[Open in Drive]({link})" if link else "")
+                        )
+                    except Exception as e:
+                        st.error(f"Upload failed: {e}")
+                if os.path.exists(file_path): os.remove(file_path)
+
+            # MEDIUM / HIGH RISK → block
             else:
                 if os.path.exists(file_path): os.remove(file_path)
                 st.error(
-                    f"🚫 **Upload Blocked**\n\n"
+                    f"🚫 **Upload Blocked — {risk}**\n\n"
                     f"This file contains sensitive information and has been blocked from cloud upload. "
                     f"The file has been deleted from the server."
                 )
                 if reasons:
-                    st.warning("**Remove or redact:**\n" + "\n".join(f"  - {r}" for r in reasons))
+                    st.warning(
+                        "**Please remove or redact the following before re-uploading:**\n" +
+                        "\n".join(f"  - {r}" for r in reasons)
+                    )
 
             keywords = get_keywords(text)
             if keywords:

@@ -2,14 +2,13 @@
 drive_uploader.py  — Cloud deployment version
 ===============================================
 Uses Google Service Account (stored in Streamlit Secrets) instead of
-OAuth2 browser flow. This works headlessly on Streamlit Community Cloud,
-Render, Hugging Face Spaces, or any cloud server.
+OAuth2 browser flow. Uploads ONLY to the shared 'Safe_Cloud_Uploads' folder.
 
 Setup (one-time):
   1. Go to Google Cloud Console → IAM & Admin → Service Accounts
   2. Create Service Account → Grant role: "Editor" or "Drive File Creator"
   3. Keys tab → Add Key → JSON → download the file
-  4. In Google Drive, share the upload folder with the service account email
+  4. In Google Drive, share the 'Safe_Cloud_Uploads' folder with the service account email
   5. In Streamlit Cloud → App Settings → Secrets → paste the JSON content
 
 Streamlit Secrets format (in the cloud dashboard, under "Secrets"):
@@ -23,13 +22,23 @@ Streamlit Secrets format (in the cloud dashboard, under "Secrets"):
   auth_uri = "https://accounts.google.com/o/oauth2/auth"
   token_uri = "https://oauth2.googleapis.com/token"
 
-LOCAL FALLBACK:
-  If Streamlit Secrets are not available (local dev), falls back to
-  the original OAuth2 token.pickle / credentials.json flow.
+  # Add this too — get it from the URL when you open the folder in Drive:
+  # https://drive.google.com/drive/folders/THIS_PART_IS_THE_ID
+  [drive]
+  upload_folder_id = "your-safe-cloud-uploads-folder-id"
 """
 
 import os
-import json
+
+
+def _get_folder_id() -> str | None:
+    """Get the target Drive folder ID from Streamlit Secrets."""
+    try:
+        import streamlit as st
+        folder_id = st.secrets.get("drive", {}).get("upload_folder_id", None)
+        return folder_id if folder_id else None
+    except Exception:
+        return None
 
 
 def _upload_with_service_account(file_path: str) -> dict:
@@ -51,7 +60,13 @@ def _upload_with_service_account(file_path: str) -> dict:
     )
 
     service = build("drive", "v3", credentials=credentials)
+
+    # ── Target the shared folder if configured ────────────────────────────
+    folder_id = _get_folder_id()
     file_metadata = {"name": os.path.basename(file_path)}
+    if folder_id:
+        file_metadata["parents"] = [folder_id]
+
     media = MediaFileUpload(file_path, resumable=True)
 
     file_resource = (
@@ -79,7 +94,6 @@ def _upload_with_oauth(file_path: str) -> dict:
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            from google.auth.transport.requests import Request
             creds.refresh(Request())
         else:
             if not os.path.exists("credentials.json"):
@@ -93,7 +107,12 @@ def _upload_with_oauth(file_path: str) -> dict:
             pickle.dump(creds, token)
 
     service = build("drive", "v3", credentials=creds)
+
+    folder_id = _get_folder_id()
     file_metadata = {"name": os.path.basename(file_path)}
+    if folder_id:
+        file_metadata["parents"] = [folder_id]
+
     media = MediaFileUpload(file_path, resumable=True)
 
     file_resource = (
@@ -106,7 +125,7 @@ def _upload_with_oauth(file_path: str) -> dict:
 
 def upload_to_drive(file_path: str) -> dict:
     """
-    Upload file to Google Drive.
+    Upload file to Google Drive → Safe_Cloud_Uploads folder.
     Uses Service Account if running on cloud (Streamlit Secrets available).
     Falls back to OAuth2 for local development.
     """
@@ -114,8 +133,13 @@ def upload_to_drive(file_path: str) -> dict:
         import streamlit as st
         if "gcp_service_account" in st.secrets:
             return _upload_with_service_account(file_path)
-    except Exception:
-        pass
+    except Exception as e:
+        # Re-raise with a clear message so the user sees it in the UI
+        raise RuntimeError(
+            f"Service Account upload failed: {e}\n\n"
+            "Make sure [gcp_service_account] is set in Streamlit Secrets and the "
+            "'Safe_Cloud_Uploads' folder is shared with the service account email."
+        )
 
     # Local development fallback
     return _upload_with_oauth(file_path)
