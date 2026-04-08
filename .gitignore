@@ -18,9 +18,6 @@ __pycache__/
 uploads/
 cloud_storage/
 
-# Model artifacts (large binary files — regenerate with ml_model.py)
-model.pkl
-
 # IDE
 .vscode/
 .idea/
