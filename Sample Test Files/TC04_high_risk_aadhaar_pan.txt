@@ -1,0 +1,12 @@
+KYC Verification Document
+
+Employee Name: Priya Verma
+Aadhaar Number: 2345 6789 0123
+PAN Card: ABCDE1234F
+Date of Birth: 15/08/1995
+Mobile: 9988776655
+
+KYC Status: Submitted
+Verification Date: 01 April 2026
+
+Please keep this document confidential.

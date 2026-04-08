@@ -1,0 +1,15 @@
+Payment Details for Invoice #4521
+
+Dear Finance Team,
+
+Please process the payment using the following card details:
+
+Cardholder: Ananya Singh
+Card Number: 4111 1111 1111 1111
+Expiry: 09/27
+CVV: 356
+
+Amount: Rs. 45,000
+Reference: INV-2026-4521
+
+Please confirm once processed.

@@ -1,0 +1,30 @@
+# Google credentials — NEVER commit these
+credentials.json
+token.pickle
+
+# Virtual environments
+.venv/
+venv/
+newenv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Uploaded files (temporary server files)
+uploads/
+cloud_storage/
+
+# Model artifacts (large binary files — regenerate with ml_model.py)
+model.pkl
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

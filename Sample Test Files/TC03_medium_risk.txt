@@ -1,0 +1,13 @@
+Employee Directory Update
+
+Please update the following contact details in the HR system:
+
+Name: Rahul Sharma
+Email: rahul.sharma92@gmail.com
+Mobile: 9876543210
+Alternate: 8765432109
+
+Department: Engineering
+Location: Chennai
+
+This is an internal directory update. Do not share outside HR.
